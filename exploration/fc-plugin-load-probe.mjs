@@ -97,8 +97,15 @@ console.log('— dsh-local-no-auth —')
 {
   const mod = await import(new URL('dsh-local-no-auth/index.js', ROOT))
   check('exports apply/name/inject', typeof mod.apply === 'function' && typeof mod.name === 'string' && Array.isArray(mod.inject))
+  const browserPeer = { marker: 'owner-peer' }
   const connection = {
     requestRejection: () => 401,
+    // Unlike the 0.2.0 shape (which delegated to `requestRejection`), 0.2.1
+    // authenticates inside `admit` / `admitConnection` — the plugin must replace
+    // all three or `/api` keeps answering 401.
+    admit: () => ({ rejection: 401 }),
+    admitConnection: () => ({ rejection: 401 }),
+    browserPeer,
     authorizeIndex: () => false,
     authenticatedUrl: (u) => `${u}?token=secret`,
   }
@@ -122,11 +129,22 @@ console.log('— dsh-local-no-auth —')
   try { mod.apply(ctx) } catch (e) { threw = e }
   check('apply does not throw', threw === undefined, threw && threw.message)
   check('requestRejection bypassed', connection.requestRejection() === undefined)
+  const admitted = connection.admit()
+  check('admit bypassed with the owner peer', admitted.rejection === undefined && admitted.peer === browserPeer)
+  const admittedSocket = connection.admitConnection()
+  check('admitConnection bypassed with the owner peer',
+    admittedSocket.rejection === undefined && admittedSocket.peer === browserPeer)
+  check('admitConnection release is a resolved no-op',
+    typeof admittedSocket.release === 'function' && admittedSocket.release() instanceof Promise)
   check('authorizeIndex bypassed', connection.authorizeIndex() === true)
   check('authenticatedUrl clean', connection.authenticatedUrl('http://x') === 'http://x')
   if (disposables.length > 0) {
     for (const dispose of disposables) dispose()
-    check('dispose restores originals', connection.requestRejection() === 401 && connection.authorizeIndex() === false)
+    check('dispose restores originals',
+      connection.requestRejection() === 401
+      && connection.admit().rejection === 401
+      && connection.admitConnection().rejection === 401
+      && connection.authorizeIndex() === false)
   } else {
     check('dispose hook registered', false)
   }

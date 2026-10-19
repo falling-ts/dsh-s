@@ -47,8 +47,14 @@ function withStderr(fn) {
 /** A ctx with working connection/webServer plus a recording appExit. */
 function makeCtx({ connection, host, appExit = true, getThrows = false, noConnection = false } = {}) {
   const calls = { exits: [], disposers: [] }
+  const browserPeer = { marker: 'owner-peer' }
   const conn = connection ?? {
     requestRejection: () => 'reject',
+    // 0.2.1 authenticates inside admit/admitConnection instead of delegating to
+    // requestRejection; the plugin must replace all five to bypass `/api`.
+    admit: () => ({ rejection: 401 }),
+    admitConnection: () => ({ rejection: 401 }),
+    browserPeer,
     authorizeIndex: () => false,
     authenticatedUrl: (u) => `${u}?token=abc`,
   }
@@ -58,6 +64,14 @@ function makeCtx({ connection, host, appExit = true, getThrows = false, noConnec
     connection: noConnection ? undefined : conn,
     webServer: host === undefined ? {} : { host },
     on(event, handler) { if (event === 'dispose') calls.disposers.push(handler) },
+    // cordis has NO 'dispose' event — the only cleanup idiom is
+    // `ctx.effect(() => () => {restore})`, where `effect` runs its callback
+    // immediately and treats the returned function as the disposer.
+    effect(execute) {
+      const produced = execute()
+      if (typeof produced === 'function') calls.disposers.push(produced)
+      return { dispose: () => { produced?.() } }
+    },
     get(name) {
       if (getThrows) throw new Error('service store unavailable')
       if (name === 'appExit' && appExit) return (code) => { calls.exits.push(code) }
@@ -113,27 +127,56 @@ console.log('=== A. 四种拒载触发点：stderr + appExit(1) + 抛错 ===\n')
 }
 
 // A4 — 认证方法不再是函数（接口漂移）
+// 0.2.1 起插件依次校验 requestRejection / admit / admitConnection /
+// authorizeIndex / authenticatedUrl，所以 mock 必须先把新增的三个补齐，
+// 否则这里测到的会是「admit 缺失」而不是「authorizeIndex 漂移」。
 {
   const r = run({
     host: '127.0.0.1',
-    connection: { requestRejection: () => 'reject', authorizeIndex: 'not-a-function', authenticatedUrl: (u) => u },
+    connection: {
+      requestRejection: () => 'reject',
+      admit: () => ({ rejection: 401 }),
+      admitConnection: () => ({ rejection: 401 }),
+      browserPeer: {},
+      authorizeIndex: 'not-a-function',
+      authenticatedUrl: (u) => u,
+    },
   })
   check('A4 方法非函数 → 抛错', r.threw, r.message)
   check('A4 stderr 点名具体方法', r.stderr.includes('authorizeIndex is not a function'), JSON.stringify(r.stderr.trim()))
   check('A4 请求非零退出', JSON.stringify(r.exits) === '[1]', JSON.stringify(r.exits))
 }
 
-console.log('\n=== B. 正常路径：回环绑定 + 三方法齐备 ===\n')
+console.log('\n=== B. 正常路径：回环绑定 + 五方法齐备 ===\n')
 
 {
   const r = run({ host: '127.0.0.1' })
   check('B1 不抛错、不请求退出', r.threw === false && r.exits.length === 0, `threw=${r.threw} exits=${JSON.stringify(r.exits)}`)
-  check('B1 三个方法均被替换', r.conn.requestRejection() === undefined && r.conn.authorizeIndex() === true && r.conn.authenticatedUrl('http://x') === 'http://x', '免 token / 免 cookie / URL 干净')
-  check('B1 未写 stderr', r.stderr === '', JSON.stringify(r.stderr))
+  const admitted = r.conn.admit()
+  const admittedSocket = r.conn.admitConnection()
+  check('B1 五个方法均被替换',
+    r.conn.requestRejection() === undefined
+    && admitted.rejection === undefined && admitted.peer === r.conn.browserPeer
+    && admittedSocket.rejection === undefined && admittedSocket.peer === r.conn.browserPeer
+    && r.conn.authorizeIndex() === true
+    && r.conn.authenticatedUrl('http://x') === 'http://x',
+    '免 token / 免 cookie / /api 放行 / URL 干净')
+  check('B1 admitConnection 的 release 是 resolved no-op',
+    typeof admittedSocket.release === 'function' && admittedSocket.release() instanceof Promise)
+  // The plugin legitimately warns on stderr when `pluginPackages` is absent (the
+  // optional metadata shim is skipped by design, see AGENTS.md); what must never
+  // appear on the success path is a `refusing to start` line.
+  check('B1 未写拒载 stderr', !r.stderr.includes('refusing to start'), JSON.stringify(r.stderr))
   check('B1 注册了 dispose 还原器', r.calls.disposers.length === 1, `disposers=${r.calls.disposers.length}`)
   // dispose 还原语义
   r.calls.disposers[0]()
-  check('B2 dispose 后原方法全部还原', r.conn.requestRejection() === 'reject' && r.conn.authorizeIndex() === false && r.conn.authenticatedUrl('http://x') === 'http://x?token=abc', '卸载后与未打补丁一致')
+  check('B2 dispose 后原方法全部还原',
+    r.conn.requestRejection() === 'reject'
+    && r.conn.admit().rejection === 401
+    && r.conn.admitConnection().rejection === 401
+    && r.conn.authorizeIndex() === false
+    && r.conn.authenticatedUrl('http://x') === 'http://x?token=abc',
+    '卸载后与未打补丁一致')
 }
 
 // localhost 别名也应放行

@@ -4,9 +4,10 @@
  * 存在的理由：PowerShell 5.1 的字符串 cmdlet 往返会以 ANSI 解码 UTF-8（无 BOM）
  * 文件，把多字节字符截断成非法 UTF-8；文件仍"看起来正常"、`ConvertFrom-Json`
  * 也照样解析，但 Node 的 `JSON.parse` 直接拒绝。本探针用 JSON.parse 作为唯一判据，
- * 并断言 peer 基线为 dsh-v0.2.0-rc.1 列车（cordis 4.0.4 / schemastery 3.18.4）。
+ * 并断言 peer 基线为 dsh-v0.2.1-rc.1 列车（cordis 4.0.5 / schemastery 3.18.5）。
  *
- * 基线历史：0.1.5 → 0.1.6-alpha.1 → 0.1.7-alpha.1 → 0.2.0-rc.1（2026-09-29 切换）。
+ * 基线历史：0.1.5 → 0.1.6-alpha.1 → 0.1.7-alpha.1 → 0.2.0-rc.1（2026-09-29 切换）
+ * → 0.2.1-rc.1（2026-10-19 切换）。
  * 每次换基线都要同步改这里的 DSH_BASELINE，并把上一档字面量加进 STALE。
  *
  * 2026-09-30 起同时守住**显示元数据**（官方 `cordis-plugin-development` skill 的
@@ -28,15 +29,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PLUGINS = ['dsh-force-compact', 'dsh-local-no-auth', 'dsh-web-ding', 'dsh-start-command', 'dsh-chinese']
 
 /** 必须已被替换掉的旧基线字面量。 */
-const STALE = ['0.1.6-alpha.1', '0.1.7-alpha.1', '"4.0.2"']
+const STALE = ['0.1.6-alpha.1', '0.1.7-alpha.1', '"4.0.2"', '">=0.2.0-rc.1"', '">=4.0.4"', '">=3.18.4"']
 
-/** 所有 `@deepseek-ai/dsh-*` peer 的下界（harness tag dsh-v0.2.0-rc.1）。 */
-const DSH_BASELINE = '>=0.2.0-rc.1'
+/** 所有 `@deepseek-ai/dsh-*` peer 的下界（harness tag dsh-v0.2.1-rc.1）。 */
+const DSH_BASELINE = '>=0.2.1-rc.1'
 
 /** 非 dsh 命名空间的 peer 下界。 */
 const OTHER_RANGES = {
-  '@deepseek-ai/cordis': '>=4.0.4',
-  '@deepseek-ai/schemastery': '>=3.18.4',
+  '@deepseek-ai/cordis': '>=4.0.5',
+  '@deepseek-ai/schemastery': '>=3.18.5',
 }
 
 /** 唯一允许是 required 的 peer；其余 dsh-* 一律 optional（由 dsh 安装提供）。 */

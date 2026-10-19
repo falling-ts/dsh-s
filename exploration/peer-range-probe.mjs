@@ -7,10 +7,14 @@
 // harness vendors (pnpm store), against the versions declared by the upstream
 // packages in deepseek-harness/, and reports both directions.
 //
-// Baseline (2026-09-30, was 2026-09-29): the plugins target the dsh **0.2.0 release
-// train**; the declared floor is its first prerelease, `0.2.0-rc.1`, and the
-// checkout is now pinned at `dsh-v0.2.0-rc.2` (0.1.7-alpha.2 → 0.2.0-rc.1, 763
-// commits). 0.2.0 adds a boot-time peer compatibility preflight (app-boot
+// Baseline (2026-10-19, was 2026-09-30): the plugins target the dsh **0.2.1 release
+// train**; the declared floor is its first prerelease, `0.2.1-rc.1`, and the
+// checkout is now pinned at `dsh-v0.2.1-rc.2` (0.2.0-rc.2 → 0.2.1-rc.2, 1925
+// commits). The 0.2.1 train is a real move, not a patch inside 0.2.0: it rewrote
+// `connection.admit` to authenticate directly (which is why the no-auth bypass had
+// to start overriding `admit`/`admitConnection`), and it hides `engines.dsh` behind
+// a new precedence rule in the boot preflight. Baseline note for 0.2.0: that train
+// added the boot-time peer compatibility preflight (app-boot
 // `plugin-compatibility.ts`) that DISABLES a profile row whose `@deepseek-ai/dsh*`
 // peers are not satisfied by the running runtime (semver, includePrerelease),
 // unless an exact-version exemption is granted via `dsh plugin allow-version` --
@@ -43,12 +47,12 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 
 /** The dsh release train the plugins ship against (first prerelease of the train). */
-const DECLARED_FLOOR = '0.2.0-rc.1'
+const DECLARED_FLOOR = '0.2.1-rc.1'
 
 /** Vendor pins: their floors equal the vendored version, so they track the checkout. */
 const VENDOR_PINS = {
-  '@deepseek-ai/cordis': '4.0.4',
-  '@deepseek-ai/schemastery': '3.18.4',
+  '@deepseek-ai/cordis': '4.0.5',
+  '@deepseek-ai/schemastery': '3.18.5',
 }
 
 /** The floor one peer name must declare, per the collection convention. */
@@ -188,16 +192,22 @@ const FLOOR = `>=${DECLARED_FLOOR}`
 check(semver.satisfies(DECLARED_FLOOR, FLOOR), `${DECLARED_FLOOR} satisfies ${FLOOR} (the floor admits itself)`)
 check(semver.satisfies(harnessVersion, FLOOR, { includePrerelease: true }),
   `the shipped ${harnessVersion} satisfies ${FLOOR} with includePrerelease (what the 0.2.0 preflight uses)`)
-check(semver.satisfies('0.2.0-rc.2', FLOOR, { includePrerelease: true }),
-  `0.2.0-rc.2 (a later prerelease of the train) is admitted by ${FLOOR}`)
+check(semver.satisfies('0.2.1-rc.2', FLOOR, { includePrerelease: true }),
+  `0.2.1-rc.2 (a later prerelease of the train) is admitted by ${FLOOR}`)
 check(!semver.satisfies('0.1.6-alpha.2', FLOOR, { includePrerelease: true }),
   `0.1.6-alpha.2 is excluded by ${FLOOR}`)
 check(!semver.satisfies('0.1.7-alpha.2', FLOOR, { includePrerelease: true }),
   `0.1.7-alpha.2 is excluded by ${FLOOR} (previous baseline, pre-0.2.0 surface)`)
-check(!semver.satisfies('0.2.0-rc.0', FLOOR, { includePrerelease: true }),
-  `0.2.0-rc.0 (earlier prerelease of the tuple) is excluded by ${FLOOR}`)
-check(semver.satisfies('0.2.0', FLOOR, { includePrerelease: true }),
-  `0.2.0 (release) is admitted (>= has no upper cap)`)
+check(!semver.satisfies('0.2.0-rc.2', FLOOR, { includePrerelease: true }),
+  `0.2.0-rc.2 (the previous train) is excluded by ${FLOOR}`)
+check(!semver.satisfies('0.2.0', FLOOR, { includePrerelease: true }),
+  `0.2.0 (release of the previous train) is excluded by ${FLOOR}`)
+check(!semver.satisfies('0.2.1-rc.0', FLOOR, { includePrerelease: true }),
+  `0.2.1-rc.0 (earlier prerelease of the tuple) is excluded by ${FLOOR}`)
+check(semver.satisfies('0.2.1', FLOOR, { includePrerelease: true }),
+  `0.2.1 (release of this train) is admitted`)
+check(semver.satisfies('0.2.2', FLOOR, { includePrerelease: true }),
+  `0.2.2 is admitted (>= has no upper cap)`)
 check(semver.satisfies('0.2.1', FLOOR, { includePrerelease: true }),
   `0.2.1 is admitted (>= has no upper cap)`)
 check(!semver.satisfies('0.1.7', FLOOR, { includePrerelease: true }),

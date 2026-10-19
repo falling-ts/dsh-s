@@ -164,7 +164,11 @@ function makeSession(surfaceOverride) {
   )
   check('影子 seq 集合不变（含产出空消息的节点）', JSON.stringify(shadowedSeqs) === JSON.stringify([1, 2, 3, 4]), JSON.stringify(shadowedSeqs))
   check('消息数不变（空 assistant 不产出消息）', messages.length === 3, `messages=${messages.length}`)
-  check('工具结果角色与 tool_call_id 保持原样', messages[2]?.tool_call_id === 'tc-1' && messages[2]?.role === 'user', JSON.stringify({ role: messages[2]?.role, tool_call_id: messages[2]?.tool_call_id }))
+  // Session format V4 (harness 0.1.7+): a tool result is a `role:'tool'` message
+  // carrying `toolCallId` — the old `role:'user'` + `{type:'tool-result'}` block
+  // family was deleted upstream, so asserting 'user' here would pin a shape the
+  // harness no longer produces.
+  check('工具结果角色与 tool_call_id 保持原样', messages[2]?.toolCallId === 'tc-1' && messages[2]?.role === 'tool', JSON.stringify({ role: messages[2]?.role, toolCallId: messages[2]?.toolCallId }))
   check('assistant source 保持原样', messages[1]?.source?.kind === 'model', JSON.stringify(messages[1]?.source))
 }
 

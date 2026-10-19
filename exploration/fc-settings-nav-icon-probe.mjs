@@ -85,9 +85,16 @@ for (const plugin of PLUGINS) {
     observe(_t, opts) { this.connected = true; this.opts = opts }
     disconnect() { this.connected = false }
   }
+  // `apply`'s body closes over module-level constants declared OUTSIDE the nav-icon
+  // block (e.g. `brandGrad`, used by the save chip), so they must be re-declared
+  // ahead of the folded body or the eval throws `ReferenceError: brandGrad is not
+  // defined`. Kept to a single explicit name on purpose: a generic single-line
+  // harvest pulls in identifiers the folded body already declares, and a
+  // multi-line literal would be truncated into a syntax error.
+  const brandGradLine = src.match(/^ {4}const brandGrad = [^\n]*$/m)?.[0] ?? ''
   const api = new Function(
     'document', 'MutationObserver', 'queueMicrotask',
-    `${body}\nreturn { installSettingsNavIcon, isOwnNavRow, navMarkUrl, navIconCss, NAV_ICON_ATTR };`,
+    `${brandGradLine}\n${body}\nreturn { installSettingsNavIcon, isOwnNavRow, navMarkUrl, navIconCss, NAV_ICON_ATTR };`,
   )(doc, FakeMutationObserver, (fn) => { Promise.resolve().then(fn) })
 
   // --- pure predicate -----------------------------------------------------

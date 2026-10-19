@@ -12,7 +12,7 @@
 //      schema keys.
 //
 // Run: node exploration/fc-timeout-guard-probe.mjs [--slow]
-import { DEFAULTS, MAX_TIMEOUT_MS, MIN_TIMEOUT_MS, readSettings } from '../dsh-force-compact/src/core/settings.js'
+import { bindConfig, DEFAULTS, MAX_TIMEOUT_MS, MIN_TIMEOUT_MS, readSettings } from '../dsh-force-compact/src/core/settings.js'
 import {
   ADAPTER_STREAM_IDLE_TIMEOUT_MS,
   adapterIdleBound,
@@ -29,14 +29,25 @@ const check = (label, ok, detail) => {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// A ctx whose `settings` service serves one stored section for our namespace.
-const ctxWith = (section) => ({
-  logger: { debug() {}, info() {}, warn() {}, error() {} },
-  get(name) {
-    if (name === 'settings') return { get: (ns) => (ns === NS ? section : undefined) }
-    return undefined
-  },
-})
+// Harness 0.1.7 removed `settings.get(ns)`: `readSettings` no longer consults the
+// ctx at all (`void ctx`) — it reads the plugin's own Config refs, which `apply`
+// binds once via `bindConfig(config)`. So the probe must bind a field-shaped store
+// (each field an object with `.get()`) instead of stubbing a ctx service; a
+// ctx-only stub silently resolves EVERY field to its default, which is exactly how
+// this probe went stale.
+const bindStore = (section) => {
+  const store = {}
+  for (const [field, value] of Object.entries(section)) store[field] = { get: () => value }
+  bindConfig(store)
+  return store
+}
+const ctxWith = (section) => {
+  bindStore(section)
+  return {
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    get() { return undefined },
+  }
+}
 
 console.log('== 1. readSettings clamps summarizationTimeoutMs to a schedulable integer ==')
 console.log(`   bounds: MIN=${MIN_TIMEOUT_MS} MAX=${MAX_TIMEOUT_MS} default=${DEFAULTS.summarizationTimeoutMs}`)
@@ -87,9 +98,13 @@ const boundCases = [
   { name: 'weird shapes everywhere', sections: { 'llm-pi-ai': { providers: { p: { streamIdleTimeoutMs: Number.NaN } } }, 'llm-deepseek': { streamIdleTimeoutMs: '600000' } }, expect: undefined },
   { name: 'zero/negative are not bounds', sections: { 'llm-deepseek': { streamIdleTimeoutMs: 0 } }, expect: undefined },
 ]
+// Another plugin's namespace is reachable only through `describe()` since harness
+// 0.1.7 removed `settings.get(ns)`: its descriptors carry the resolved `value`.
 const boundCtxFor = (sections) => ({
   logger: { debug() {}, info() {}, warn() {}, error() {} },
-  get: (name) => (name === 'settings' ? { get: (ns) => sections[ns] } : undefined),
+  get: (name) => (name === 'settings'
+    ? { describe: () => Object.entries(sections).map(([ns, value]) => ({ ns, value })) }
+    : undefined),
 })
 for (const c of boundCases) {
   const got = adapterIdleBound(boundCtxFor(c.sections), 'p')
@@ -111,7 +126,10 @@ const capture = (sections) => {
       warn: (m) => lines.push(['warn', m]),
       error() {},
     },
-    get: (name) => (name === 'settings' ? { get: (ns) => sections[ns] } : undefined),
+    // Same 0.1.7 seam as `boundCtxFor`: adapters' namespaces come from `describe()`.
+    get: (name) => (name === 'settings'
+      ? { describe: () => Object.entries(sections).map(([ns, value]) => ({ ns, value })) }
+      : undefined),
   }
   return { ctx, lines }
 }
