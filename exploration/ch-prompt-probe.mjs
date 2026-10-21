@@ -30,6 +30,8 @@ const index = await load('index.js')
 const text = await load('src/core/prompt-text.js')
 const settings = await load('src/core/settings.js')
 const sections = await load('src/hooks/sections.js')
+const rebrand = await load('src/core/rebrand.js')
+const rebrandHook = await load('src/hooks/rebrand.js')
 
 let passed = 0
 let failed = 0
@@ -66,6 +68,8 @@ function makeCtx({ services = {} } = {}) {
   const logger = { info: [], warn: [], error: [], debug: [] }
   const effects = []
   const injections = []
+  /** 事件名 → 监听器数组。waterfall 的调用顺序就是注册顺序(先注册的在最外层)。 */
+  const listeners = new Map()
   for (const level of Object.keys(logger)) {
     logger[level] = []
   }
@@ -89,10 +93,20 @@ function makeCtx({ services = {} } = {}) {
       cb(child)
       return child
     },
+    /** 收下监听器并归还 disposer,与 cordis 的 `ctx.on` 同形。 */
+    on: (event, listener) => {
+      const list = listeners.get(event) ?? []
+      list.push(listener)
+      listeners.set(event, list)
+      return () => {
+        const at = list.indexOf(listener)
+        if (at >= 0) list.splice(at, 1)
+      }
+    },
     // 展开 services 到顶层,让 `inject: ['systemPrompt']` 对应的 ctx.systemPrompt 可用
     ...services,
   }
-  return { ctx, logger, effects, injections }
+  return { ctx, logger, effects, injections, listeners }
 }
 
 /**
@@ -108,15 +122,52 @@ function render(registered) {
     .join('\n\n')
 }
 
+/**
+ * 按 cordis 的 waterfall 语义跑一条链:先注册的监听器在最外层,每个监听器收到
+ * `(...args, next)`,`next()` 进入下一个,链末返回初始装配结果。与上游
+ * `docs/cordis-primer.md` 的描述一致(around-middleware,值经 `next()` 传播)。
+ */
+function runWaterfall(listeners, assembly, context = {}) {
+  const list = listeners.get('system-prompt/assemble') ?? []
+  const invoke = (index) => {
+    if (index >= list.length) return Promise.resolve(assembly)
+    return Promise.resolve(list[index](assembly, context, () => invoke(index + 1)))
+  }
+  return invoke(0)
+}
+
+/**
+ * 模拟上游 `assemble()`:从桩注册表取段落(provider 求值)→ 跑装配 waterfall。
+ * 与上游一样先排序、**保留**空串段落(丢弃发生在 `renderPrompt`)。
+ */
+function assemble(registry, listeners, variables = {}) {
+  const sections = [...registry.registered.values()]
+    .slice()
+    .sort((a, b) => a.order - b.order || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map((section) => ({
+      name: section.name,
+      text: typeof section.text === 'function' ? section.text({}) : section.text,
+    }))
+  return runWaterfall(listeners, { sections, contexts: [], tools: [], variables })
+}
+
+/** 按 `renderPrompt` 的语义渲染一次装配:丢弃空串段落 → 空行连接。 */
+function renderAssembly(assembly) {
+  return assembly.sections
+    .filter((section) => section.text.length > 0)
+    .map((section) => section.text)
+    .join('\n\n')
+}
+
 /** 一次性装好插件:`apply` 拿到的是已绑定开关的 config 桩。 */
 function mount({ toggles = {}, orders } = {}) {
   const registry = makeSystemPrompt(orders === undefined ? {} : { orders })
   const services = { systemPrompt: registry.service }
-  const { ctx, logger, effects, injections } = makeCtx({ services })
+  const { ctx, logger, effects, injections, listeners } = makeCtx({ services })
   const config = makeConfig(toggles)
   settings.bindConfig(config)
   index.apply(ctx, config)
-  return { registry, logger, effects, injections, config }
+  return { registry, logger, effects, injections, listeners, config }
 }
 
 /** Config 桩:`[field] = { get() }`——与 schemastery 的 volatile ref 同形。 */
@@ -287,9 +338,11 @@ console.log('\n[3] 默认值与静默回退')
   check(settings.DEFAULTS.chineseOnly === true, 'chineseOnly 默认 true')
   check(settings.DEFAULTS.editToolOnly === true, 'editToolOnly 默认 true')
   check(settings.DEFAULTS.inlineScriptOnly === true, 'inlineScriptOnly 默认 true')
-  check(Object.keys(settings.DEFAULTS).length === 3, 'DEFAULTS 恰好 3 个开关', String(Object.keys(settings.DEFAULTS).length))
+  check(settings.DEFAULTS.rebrand === true, 'rebrand 默认 true')
+  check(Object.keys(settings.DEFAULTS).length === 4, 'DEFAULTS 恰好 4 个开关', String(Object.keys(settings.DEFAULTS).length))
   check(settings.INLINE_SCRIPT_FIELD === 'inlineScriptOnly',
     'INLINE_SCRIPT_FIELD 常量 = inlineScriptOnly', settings.INLINE_SCRIPT_FIELD)
+  check(settings.REBRAND_FIELD === 'rebrand', 'REBRAND_FIELD 常量 = rebrand', settings.REBRAND_FIELD)
   check(settings.readToggle(settings.CHINESE_FIELD, true) === true, '未绑定时 readToggle 回退到默认值')
   // 非布尔值(字符串 'false'、数字、null)一律回退,不做强制转换。
   settings.bindConfig({ [settings.CHINESE_FIELD]: { get: () => 'false' } })
@@ -304,15 +357,19 @@ console.log('\n[3] 默认值与静默回退')
 // ── 4. apply 的注册行为 ──────────────────────────────────────────────────────
 console.log('\n[4] apply 的注册行为')
 {
-  const { registry, logger, effects, injections } = mount()
+  const { registry, logger, effects, injections, listeners } = mount()
   check(registry.registered.size === 3, 'apply 注册了 3 个段落', String(registry.registered.size))
   check(registry.registered.has(text.CHINESE_RULE_SECTION), `注册了 ${text.CHINESE_RULE_SECTION}`)
   check(registry.registered.has(text.EDIT_TOOL_RULE_SECTION), `注册了 ${text.EDIT_TOOL_RULE_SECTION}`)
   check(registry.registered.has(text.INLINE_SCRIPT_RULE_SECTION), `注册了 ${text.INLINE_SCRIPT_RULE_SECTION}`)
-  check(effects.length === 3, '三个段落都由 ctx.effect 持有(可卸载)', String(effects.length))
+  check(effects.length === 4, '三个段落 + 一个替换监听器都由 ctx.effect 持有(可卸载)', String(effects.length))
   check(effects.every((e) => typeof e.disposer === 'function'), '每个 effect 都归还了 disposer')
   check(effects.every((e) => typeof e.label === 'string' && e.label.includes('dsh-chinese')),
     '每个 effect 都带 dsh-chinese 标签')
+  check(effects.some((e) => e.label.includes('rebrand')), '替换监听器的 effect 带 rebrand 标签')
+  check((listeners.get('system-prompt/assemble') ?? []).length === 1,
+    'apply 在 system-prompt/assemble 上挂了 1 个监听器')
+  check(typeof rebrandHook.registerRebrandRewrite === 'function', 'hooks/rebrand.js 导出 registerRebrandRewrite')
   check(injections.some((names) => Array.isArray(names) && names.includes('settings')),
     '设置表单声明走惰性 ctx.inject(["settings"])')
   check(logger.info.some((m) => m.includes('[dsh-chinese] active')), 'apply 打印了 active 行')
@@ -372,10 +429,12 @@ console.log('\n[5] 开关按每次装配求值')
 // ── 6. 卸载后注册表干净(HMR 安全) ────────────────────────────────────────────
 console.log('\n[6] 卸载后注册表干净')
 {
-  const { registry, effects } = mount()
+  const { registry, effects, listeners } = mount()
   check(registry.registered.size === 3, '卸载前 3 段')
+  check((listeners.get('system-prompt/assemble') ?? []).length === 1, '卸载前挂着替换监听器')
   for (const effect of effects) effect.disposer()
   check(registry.registered.size === 0, '卸载后 0 段(注册表干净)', String(registry.registered.size))
+  check((listeners.get('system-prompt/assemble') ?? []).length === 0, '卸载后替换监听器也被摘掉')
   check(render(registry.registered) === '', '卸载后渲染为空')
   // 重新 apply 必须能再次注册(证明上一轮没留残留导致 duplicate 抛错)。
   settings.bindConfig(makeConfig({}))
@@ -475,7 +534,78 @@ console.log('\n[8] 清单与显示元数据')
   }
 }
 
+// ── 9. 产品名替换 ────────────────────────────────────────────────────────────
+console.log('\n[9] 产品名替换(DeepSeek Harness → Work Buddy)')
+{
+  check(rebrand.REBRAND_FROM === 'DeepSeek Harness', 'REBRAND_FROM 逐字 = DeepSeek Harness', rebrand.REBRAND_FROM)
+  check(rebrand.REBRAND_TO === 'Work Buddy', 'REBRAND_TO 逐字 = Work Buddy', rebrand.REBRAND_TO)
+
+  // 全部出现都换掉,而不是只换第一处。
+  const many = 'DeepSeek Harness, then DeepSeek Harness, then DeepSeek Harness.'
+  check(rebrand.rebrandText(many) === 'Work Buddy, then Work Buddy, then Work Buddy.',
+    '文本里每一处都被替换', rebrand.rebrandText(many))
+  check(rebrand.rebrandText('no product name here') === 'no product name here', '不含产品名的文本原样返回')
+  check(rebrand.rebrandText('DeepSeek model') === 'DeepSeek model', '单独的 DeepSeek 不被替换')
+  check(rebrand.rebrandText(undefined) === undefined, '非字符串原样返回(undefined)')
+  check(rebrand.rebrandText(42) === 42, '非字符串原样返回(数字)')
+  check(rebrand.rebrandText('') === '', '空串原样返回')
+
+  // 上游身份句由 `SystemPrompt` 构造函数自己注册,正是本功能要改的那一句。
+  // 桩注册表补上它,模拟上游那次注册。
+  const registry = makeSystemPrompt({})
+  const { ctx, effects, listeners } = makeCtx({ services: { systemPrompt: registry.service } })
+  index.apply(ctx, makeConfig({}))
+  registry.registered.set('harness:identity', {
+    name: 'harness:identity',
+    order: -1000,
+    text: 'You are an AI agent powered by DeepSeek Harness.',
+  })
+
+  const rendered = renderAssembly(await assemble(registry, listeners))
+  check(rendered.includes('You are an AI agent powered by Work Buddy.'),
+    '身份句渲染为 powered by Work Buddy', rendered.split('\n\n')[0])
+  check(!rendered.includes('DeepSeek Harness'), '渲染结果里不再出现 DeepSeek Harness')
+  check(rendered.includes('所有思考过程和临时输出都必须使用中文'), '三段规则照常渲染(替换不吞掉它们)')
+
+  // 替换只叠加在装配结果之上,不改动链上其它贡献与字段。
+  const shape = await assemble(registry, listeners)
+  check(Array.isArray(shape.sections) && shape.sections.length === 4,
+    '装配仍是 4 段(3 条规则 + 身份句)', String(shape.sections?.length))
+  check(Array.isArray(shape.contexts) && shape.contexts.length === 0,
+    'contexts 按引用透传(刻意不改写:refreshContext 会重算)')
+  check(Array.isArray(shape.tools), 'tools 字段按引用透传')
+
+  // 下游监听器必须被走到,证明没有短路整条 waterfall。
+  const down = makeSystemPrompt({})
+  const { ctx: ctx2, listeners: listeners2 } = makeCtx({ services: { systemPrompt: down.service } })
+  index.apply(ctx2, makeConfig({}))
+  let innerRan = false
+  listeners2.get('system-prompt/assemble').push((a, c, next) => { innerRan = true; return next() })
+  await assemble(down, listeners2)
+  check(innerRan === true, '替换监听器调用了 next()(未短路 waterfall)')
+
+  // 关掉开关:一个字节都不改。
+  settings.bindConfig(makeConfig({ [settings.REBRAND_FIELD]: false }))
+  const off = renderAssembly(await assemble(registry, listeners))
+  check(off.includes('You are an AI agent powered by DeepSeek Harness.'), '关掉 rebrand 后身份句保持原样')
+  check(!off.includes('Work Buddy'), '关掉 rebrand 后不引入 Work Buddy')
+
+  // 按每次装配求值:改回设置后同一条链的下一次装配立即生效,无需重启或重注册。
+  settings.bindConfig(makeConfig({ [settings.REBRAND_FIELD]: true }))
+  check(renderAssembly(await assemble(registry, listeners)).includes('Work Buddy'),
+    '重新打开后下一次装配立即生效(无需重启/重注册)')
+
+  // 非布尔值按未设置处理,回退到默认(开)。
+  settings.bindConfig(makeConfig({ [settings.REBRAND_FIELD]: 'false' }))
+  check(renderAssembly(await assemble(registry, listeners)).includes('Work Buddy'),
+    '字符串 "false" 不生效(按未设置处理,回退默认开)')
+
+  settings.bindConfig(makeConfig({}))
+  for (const effect of effects) effect.disposer()
+  check((listeners.get('system-prompt/assemble') ?? []).length === 0, '卸载后替换监听器被摘掉')
+}
+
 console.log('')
-if (failed === 0) console.log(`全部 ${passed} 项通过:dsh-chinese 提示词文本 / 开关语义 / 注册与卸载`)
+if (failed === 0) console.log(`全部 ${passed} 项通过:dsh-chinese 提示词文本 / 开关语义 / 注册与卸载 / 产品名替换`)
 else console.log(`${failed} 项失败(通过 ${passed})`)
 process.exit(failed === 0 ? 0 : 1)

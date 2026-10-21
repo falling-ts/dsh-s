@@ -202,6 +202,15 @@ console.log('\n[3] 真实回合:规则是否进入系统提示词')
         '中文规则落在系统提示词后半(尾部锚点未被中间槽位挤走)',
         `language@${languageAt} len@${prompt.length}`)
 
+      // 产品名替换:身份句由上游 `SystemPrompt` 构造函数自己注册,本插件改不动它,
+      // 因此走的是 `system-prompt/assemble` waterfall 的后处理。这里验证它到达模型时
+      // 已经换名,并且提示词里不再残留旧名(旧名还出现在 harness-dev-context 的两段里)。
+      check(prompt.includes('You are an AI agent powered by Work Buddy.'),
+        'system/message 里身份句已替换为 powered by Work Buddy')
+      const staleAt = prompt.indexOf('DeepSeek Harness')
+      check(staleAt < 0, 'system/message 里不再出现 DeepSeek Harness',
+        staleAt < 0 ? '' : `首个残留 @${staleAt}`)
+
       // 软判据:模型自己在回答里复述了这些规则(说明它确实读到了)。
       const assistant = (page.records ?? []).find((r) => r?.event?.type === 'assistant/message')
       const reply = ((assistant?.event?.data?.message?.content ?? []).map((c) => c.text ?? '').join('\n'))
