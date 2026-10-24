@@ -44,12 +44,25 @@ const dismissed = await page.evaluate(() => {
 })
 await sleep(1500)
 
-// 2) open settings (bottom-left gear)
-await page.evaluate(() => {
-  const el = Array.from(document.querySelectorAll('button, a, [role="button"], div, span'))
-    .find((n) => n.children.length === 0 && (n.textContent || '').trim() === '设置')
-  if (el) el.click()
-})
+// 2) open settings. 0.2.1-rc.3 moved the entry into the account menu; the
+//    shortcut that menu advertises is the composition-independent way in, with
+//    the account-menu walk kept as a fallback.
+await page.keyboard.press('Control+Alt+,')
+await sleep(3000)
+const opened = await page.evaluate(() => document.querySelectorAll('[role="dialog"] nav button').length > 0)
+if (!opened) {
+  await page.evaluate(() => {
+    const account = Array.from(document.querySelectorAll('button'))
+      .find((b) => (b.getAttribute('aria-label') || '') === '账号菜单')
+    if (account) account.click()
+  })
+  await sleep(1200)
+  await page.evaluate(() => {
+    const item = Array.from(document.querySelectorAll('[role="menuitem"], [role="menu"] button, [role="menu"] div'))
+      .find((n) => (n.textContent || '').trim().startsWith('设置'))
+    if (item) item.click()
+  })
+}
 await sleep(6000)
 await page.screenshot({ path: `${OUT}/web-020-settings-1.png` })
 

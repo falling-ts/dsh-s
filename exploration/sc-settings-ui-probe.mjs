@@ -84,11 +84,27 @@ try {
     if (button) button.click()
   })
   await sleep(1200)
-  await page.evaluate(() => {
-    const entry = Array.from(document.querySelectorAll('button, a, [role="button"], div, span'))
-      .find((node) => node.children.length === 0 && (node.textContent || '').trim() === '设置')
-    if (entry) entry.click()
-  })
+  // 0.2.1-rc.3 moved the settings entry into the account menu (the standalone
+  // bottom-left "设置" node is gone); the advertised shortcut is the stable way
+  // in, with the account-menu walk as a fallback.
+  await page.keyboard.press('Control+Alt+,')
+  await sleep(3000)
+  const settingsOpen = await page.evaluate(
+    () => document.querySelectorAll('[role="dialog"] nav button').length > 0,
+  )
+  if (!settingsOpen) {
+    await page.evaluate(() => {
+      const account = Array.from(document.querySelectorAll('button'))
+        .find((b) => (b.getAttribute('aria-label') || '') === '账号菜单')
+      if (account) account.click()
+    })
+    await sleep(1200)
+    await page.evaluate(() => {
+      const item = Array.from(document.querySelectorAll('[role="menuitem"], [role="menu"] button, [role="menu"] div'))
+        .find((n) => (n.textContent || '').trim().startsWith('设置'))
+      if (item) item.click()
+    })
+  }
   await sleep(4000)
 
   console.log(`\n=== 1. 分区渲染 ===`)
