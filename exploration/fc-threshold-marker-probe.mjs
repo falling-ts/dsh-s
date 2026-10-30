@@ -10,6 +10,10 @@ const require = createRequire('D:/AI/dsh-s/deepseek-harness/apps/web/package.jso
 const { chromium } = require('playwright')
 const PORT = Number(process.argv[2] ?? 3080)
 const BASE = `http://127.0.0.1:${PORT}`
+// 本探针验证的是「打开一个带上下文压力的会话后」的几何渲染，所以需要一个已存在的会话。
+// 会话名可传参：`node fc-threshold-marker-probe.mjs 3099 <会话标题>`。默认沿用本仓库历史上
+// 用过的那一个；找不到时探针干净跳过（见文末），不把「环境里没有这个会话」报成插件失败。
+const SESSION_NAME = process.argv[3] ?? '熟悉项目'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let ok = 0, bad = 0
@@ -31,7 +35,7 @@ await sleep(2000)
 await page.evaluate((name) => {
   const row = [...document.querySelectorAll('*')].find((n) => n.children.length === 0 && (n.textContent || '').trim() === name)
   if (row) { const b = row.closest('button, a, [role="button"], li, div'); (b || row).click() }
-}, '熟悉项目')
+}, SESSION_NAME)
 await sleep(9000)
 
 const meterOf = () => `(() => {
@@ -45,11 +49,13 @@ const meterOf = () => `(() => {
 
 const ringGeometry = () => page.evaluate(() => {
   const chip = document.querySelector('[data-fc-threshold-chip]')
+  if (!chip || !chip.parentElement) return null
   const wrap = chip.parentElement
   const dock = wrap.parentElement
-  const meter = [...dock.children].find((c) => c !== wrap)
+  const meter = dock ? [...dock.children].find((c) => c !== wrap) : null
   const mark = document.querySelector('[data-fc-ring-marker]')
-  const svg = meter.querySelector('svg')
+  const svg = meter ? meter.querySelector('svg') : null
+  if (!meter || !svg) return null
   const mr = meter.getBoundingClientRect(), sr = svg.getBoundingClientRect()
   const a = mark ? mark.getBoundingClientRect() : null
   return {
@@ -69,11 +75,12 @@ const ringGeometry = () => page.evaluate(() => {
 
 const barGeometry = () => page.evaluate(() => {
   const chip = document.querySelector('[data-fc-threshold-chip]')
+  if (!chip || !chip.parentElement) return { open: false, hasMark: false, color: null }
   const wrap = chip.parentElement
   const dock = wrap.parentElement
-  const meter = [...dock.children].find((c) => c !== wrap)
+  const meter = dock ? [...dock.children].find((c) => c !== wrap) : null
   const panel = [...document.querySelectorAll('[role="dialog"]')].find((d) => !d.hasAttribute('data-fc-threshold-panel'))
-  const meterBtn = meter.querySelector('button')
+  const meterBtn = meter ? meter.querySelector('button') : null
   const open = meterBtn && meterBtn.getAttribute('aria-expanded') === 'true'
   const mark = document.querySelector('[data-fc-bar-marker]')
   let info = { open, hasMark: !!mark, color: mark ? getComputedStyle(mark).backgroundColor : null }
@@ -90,6 +97,18 @@ const barGeometry = () => page.evaluate(() => {
   }
   return info
 })
+
+// --- 0. 前置：必须已经打开一个带上下文压力的会话 ---------------------------
+// 空态首页（尚未打开任何会话）不会渲染阈值 chip。这不是插件回归，而是探针前提不满足，
+// 所以干净跳过而不是把「环境没准备好」报成失败。
+if ((await page.evaluate(() => !!document.querySelector('[data-fc-threshold-chip]'))) === false) {
+  console.log('')
+  console.log(`SKIP: 页面上没有阈值 chip——本探针需要先打开一个带上下文压力的会话。`)
+  console.log(`      尝试的会话名: ${SESSION_NAME}`)
+  console.log(`      用法: node exploration/fc-threshold-marker-probe.mjs <port> <会话标题>`)
+  await browser.close()
+  process.exit(0)
+}
 
 // --- 1. ratio < 1: both markers present -----------------------------------
 const ring1 = await ringGeometry()
