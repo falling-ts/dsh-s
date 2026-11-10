@@ -7,10 +7,14 @@
 // harness vendors (pnpm store), against the versions declared by the upstream
 // packages in deepseek-harness/, and reports both directions.
 //
-// Baseline (2026-10-19, was 2026-09-30): the plugins target the dsh **0.2.1 release
-// train**; the declared floor is its first prerelease, `0.2.1-rc.1`, and the
-// checkout is now pinned at `dsh-v0.2.1-rc.2` (0.2.0-rc.2 → 0.2.1-rc.2, 1925
-// commits). The 0.2.1 train is a real move, not a patch inside 0.2.0: it rewrote
+// Baseline (2026-11-10, was 2026-10-19 / 2026-09-30): the plugins target the dsh
+// **0.2.2 release train**; the declared floor is its first prerelease,
+// `0.2.2-rc.1`, and the checkout is pinned at `0.2.2-rc.1` (b830ec950f → fcc0ad4621,
+// 3434 commits). The 0.2.2 train is a real move, not a patch inside 0.2.1: it
+// split `system-prompt/assemble`'s payload into `PromptPresentation` (dropping
+// `tools`, which the waterfall may no longer replace), branded `ReasoningEffortId`,
+// and added `WebResource` routes plus a `peer` argument to `webserver/index-inject`.
+// Baseline note for 0.2.1: that train is a real move, not a patch inside 0.2.0: it rewrote
 // `connection.admit` to authenticate directly (which is why the no-auth bypass had
 // to start overriding `admit`/`admitConnection`), and it hides `engines.dsh` behind
 // a new precedence rule in the boot preflight. Baseline note for 0.2.0: that train
@@ -47,12 +51,12 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 
 /** The dsh release train the plugins ship against (first prerelease of the train). */
-const DECLARED_FLOOR = '0.2.1-rc.1'
+const DECLARED_FLOOR = '0.2.2-rc.1'
 
 /** Vendor pins: their floors equal the vendored version, so they track the checkout. */
 const VENDOR_PINS = {
-  '@deepseek-ai/cordis': '4.0.5',
-  '@deepseek-ai/schemastery': '3.18.5',
+  '@deepseek-ai/cordis': '4.1.0',
+  '@deepseek-ai/schemastery': '3.19.0',
 }
 
 /** The floor one peer name must declare, per the collection convention. */
@@ -192,8 +196,8 @@ const FLOOR = `>=${DECLARED_FLOOR}`
 check(semver.satisfies(DECLARED_FLOOR, FLOOR), `${DECLARED_FLOOR} satisfies ${FLOOR} (the floor admits itself)`)
 check(semver.satisfies(harnessVersion, FLOOR, { includePrerelease: true }),
   `the shipped ${harnessVersion} satisfies ${FLOOR} with includePrerelease (what the 0.2.0 preflight uses)`)
-check(semver.satisfies('0.2.1-rc.2', FLOOR, { includePrerelease: true }),
-  `0.2.1-rc.2 (a later prerelease of the train) is admitted by ${FLOOR}`)
+check(semver.satisfies('0.2.2-rc.2', FLOOR, { includePrerelease: true }),
+  `0.2.2-rc.2 (a later prerelease of the train) is admitted by ${FLOOR}`)
 check(!semver.satisfies('0.1.6-alpha.2', FLOOR, { includePrerelease: true }),
   `0.1.6-alpha.2 is excluded by ${FLOOR}`)
 check(!semver.satisfies('0.1.7-alpha.2', FLOOR, { includePrerelease: true }),
@@ -203,13 +207,17 @@ check(!semver.satisfies('0.2.0-rc.2', FLOOR, { includePrerelease: true }),
 check(!semver.satisfies('0.2.0', FLOOR, { includePrerelease: true }),
   `0.2.0 (release of the previous train) is excluded by ${FLOOR}`)
 check(!semver.satisfies('0.2.1-rc.0', FLOOR, { includePrerelease: true }),
-  `0.2.1-rc.0 (earlier prerelease of the tuple) is excluded by ${FLOOR}`)
-check(semver.satisfies('0.2.1', FLOOR, { includePrerelease: true }),
-  `0.2.1 (release of this train) is admitted`)
+  `0.2.1-rc.0 (earlier prerelease of an older train's tuple) is excluded by ${FLOOR}`)
+check(!semver.satisfies('0.2.1-rc.5', FLOOR, { includePrerelease: true }),
+  `0.2.1-rc.5 (the previous train's last prerelease) is excluded by ${FLOOR}`)
+check(!semver.satisfies('0.2.1', FLOOR, { includePrerelease: true }),
+  `0.2.1 (release of the previous train) is excluded by ${FLOOR}`)
+check(!semver.satisfies('0.2.2-rc.0', FLOOR, { includePrerelease: true }),
+  `0.2.2-rc.0 (earlier prerelease of the tuple) is excluded by ${FLOOR}`)
 check(semver.satisfies('0.2.2', FLOOR, { includePrerelease: true }),
-  `0.2.2 is admitted (>= has no upper cap)`)
-check(semver.satisfies('0.2.1', FLOOR, { includePrerelease: true }),
-  `0.2.1 is admitted (>= has no upper cap)`)
+  `0.2.2 (release of this train) is admitted`)
+check(semver.satisfies('0.3.0-rc.1', FLOOR, { includePrerelease: true }),
+  `0.3.0-rc.1 is admitted (>= has no upper cap)`)
 check(!semver.satisfies('0.1.7', FLOOR, { includePrerelease: true }),
   `0.1.7 (release) is excluded by ${FLOOR}`)
 

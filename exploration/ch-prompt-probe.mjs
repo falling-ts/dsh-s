@@ -524,10 +524,10 @@ console.log('\n[8] 清单与显示元数据')
   }
   const peers = manifest.peerDependencies ?? {}
   const meta = manifest.peerDependenciesMeta ?? {}
-  check(peers['@deepseek-ai/cordis'] === '>=4.0.5', 'cordis peer = >=4.0.5')
-  check(peers['@deepseek-ai/schemastery'] === '>=3.18.5', 'schemastery peer = >=3.18.5')
-  check(peers['@deepseek-ai/dsh-system-prompt'] === '>=0.2.1-rc.1', 'system-prompt peer = >=0.2.1-rc.1')
-  check(peers['@deepseek-ai/dsh-settings'] === '>=0.2.1-rc.1', 'settings peer = >=0.2.1-rc.1')
+  check(peers['@deepseek-ai/cordis'] === '>=4.1.0', 'cordis peer = >=4.1.0')
+  check(peers['@deepseek-ai/schemastery'] === '>=3.19.0', 'schemastery peer = >=3.19.0')
+  check(peers['@deepseek-ai/dsh-system-prompt'] === '>=0.2.2-rc.1', 'system-prompt peer = >=0.2.2-rc.1')
+  check(peers['@deepseek-ai/dsh-settings'] === '>=0.2.2-rc.1', 'settings peer = >=0.2.2-rc.1')
   check(meta['@deepseek-ai/cordis']?.optional !== true, 'cordis 是 required peer')
   for (const name of ['@deepseek-ai/schemastery', '@deepseek-ai/dsh-system-prompt', '@deepseek-ai/dsh-settings']) {
     check(meta[name]?.optional === true, `${name} 是 optional peer`)
